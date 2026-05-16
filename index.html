@@ -280,6 +280,8 @@
     let startFlash = 0;
     let activeFruit = null; // { type, points, timer, eatenCount }
     let fruitSpawned = [false, false]; // 對應 FRUIT_SPAWN_DOTS 的兩次出現
+    let lastTime = 0;
+    const isMobile = () => window.innerWidth <= 640 || 'ontouchstart' in window || navigator.maxTouchPoints > 0;
 
     // 讀取最高分
     try { highScore = parseInt(localStorage.getItem('pacmanHighScore')) || 0; } catch(e) { highScore = 0; }
@@ -346,14 +348,15 @@
         }
         return true;
       }
-      update() {
+      update(deltaTime) {
+        const dtScale = deltaTime / 16.67;
         if (this.dir.x === 0 && this.dir.y === 0) {
           if (this.nextDir.x !== 0 || this.nextDir.y !== 0) {
             if (this.canMove(this.nextDir)) { this.dir = { ...this.nextDir }; }
           }
           return;
         }
-        this.progress += this.speed / TILE_SIZE;
+        this.progress += (this.speed / TILE_SIZE) * dtScale;
         if (this.progress >= 1) {
           this.tileX += this.dir.x;
           this.tileY += this.dir.y;
@@ -390,12 +393,13 @@
         this.angleOffset = 0;
         this.moving = false;
       }
-      update() {
+      update(deltaTime) {
+        const dtScale = deltaTime / 16.67;
         this.moving = (this.dir.x !== 0 || this.dir.y !== 0);
-        super.update();
+        super.update(deltaTime);
         // 嘴巴動畫 3-4 幀
         if (this.moving) {
-          this.mouthTimer += 1;
+          this.mouthTimer += dtScale;
           if (this.mouthTimer >= 6) {
             this.mouthTimer = 0;
             this.mouthFrame = (this.mouthFrame + 1) % 4;
@@ -466,9 +470,9 @@
         this.eyeDir = { x: 0, y: -1 };
         this.houseDir = 1; // 在屋內左右擺動
       }
-      update() {
+      update(deltaTime) {
         if (!this.active) {
-          this.spawnDelay -= 16.67;
+          this.spawnDelay -= deltaTime;
           if (this.spawnDelay <= 0) { this.active = true; }
           return;
         }
@@ -478,23 +482,24 @@
 
         // 鬼魂屋內行為
         if (this.inHouse && !this.eaten) {
-          this.updateInHouse();
+          this.updateInHouse(deltaTime);
           return;
         }
 
-        super.update();
+        super.update(deltaTime);
         if (this.dir.x !== 0 || this.dir.y !== 0) { this.eyeDir = { ...this.dir }; }
       }
-      updateInHouse() {
+      updateInHouse(deltaTime) {
+        const dtScale = deltaTime / 16.67;
         // 在鬼魂屋內先移動到門正下方，再向上出門
         const doorY = 12 * TILE_SIZE + TILE_SIZE / 2 + MAZE_OFFSET_Y;
         const targetX = 13 * TILE_SIZE + TILE_SIZE / 2; // col 13 center
         if (Math.abs(this.x - targetX) > 1) {
-          this.x += (targetX > this.x ? 1 : -1) * 0.8;
+          this.x += (targetX > this.x ? 1 : -1) * 0.8 * dtScale;
           this.eyeDir = targetX > this.x ? DIRECTIONS.RIGHT : DIRECTIONS.LEFT;
         } else {
           this.x = targetX;
-          this.y -= this.speed;
+          this.y -= this.speed * dtScale;
           this.eyeDir = DIRECTIONS.UP;
           if (this.y <= doorY) {
             this.inHouse = false;
@@ -708,7 +713,7 @@
 
     function updateFruit() {
       if (!activeFruit || activeFruit.eaten) return;
-      activeFruit.timer -= 16.67;
+      activeFruit.timer -= deltaTime;
       if (activeFruit.timer <= 0) {
         activeFruit = null;
       }
@@ -778,8 +783,11 @@
       ctx.strokeStyle = WALL_COLOR;
       ctx.lineWidth = WALL_THICKNESS;
       ctx.lineCap = 'round';
-      ctx.shadowColor = WALL_COLOR;
-      ctx.shadowBlur = 8;
+      // 手機上關閉發光效果以提升效能
+      if (!isMobile()) {
+        ctx.shadowColor = WALL_COLOR;
+        ctx.shadowBlur = 8;
+      }
 
       // 水平與垂直連線
       for (let row = 0; row < ROWS; row++) {
@@ -991,7 +999,7 @@
       ctx.textBaseline = 'middle';
       for (let i = floatingTexts.length - 1; i >= 0; i--) {
         const ft = floatingTexts[i];
-        ft.timer -= 16.67;
+        ft.timer -= deltaTime;
         if (ft.timer <= 0) { floatingTexts.splice(i, 1); continue; }
         ctx.fillStyle = ft.color;
         ctx.fillText(ft.text, ft.x, ft.y);
@@ -1080,7 +1088,7 @@
     }
 
     function drawWinScreen() {
-      winFlashTimer += 16.67;
+      winFlashTimer += deltaTime;
       ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
       ctx.fillRect(0, MAZE_OFFSET_Y, CANVAS_WIDTH, ROWS * TILE_SIZE);
       ctx.textAlign = 'center';
@@ -1098,7 +1106,7 @@
 
     function drawDeathAnimation() {
       const cx = pacman.x, cy = pacman.y, r = ENTITY_RADIUS;
-      deathAnimTimer += 16.67;
+      deathAnimTimer += deltaTime;
 
       // 3 幀動畫, 總共 1500ms
       const total = 1500;
@@ -1132,25 +1140,25 @@
     }
 
     // ==================== 主遊戲循環 ====================
-    function update() {
+    function update(deltaTime) {
       if (gameState === 'start') return;
 
       if (gameState === 'ready') {
-        readyTimer -= 16.67;
+        readyTimer -= deltaTime;
         if (readyTimer <= 0) { gameState = 'playing'; }
         return;
       }
 
       if (gameState === 'playing') {
         pacman.nextDir = nextDir;
-        pacman.update();
-        for (const ghost of ghosts) { ghost.update(); }
+        pacman.update(deltaTime);
+        for (const ghost of ghosts) { ghost.update(deltaTime); }
         checkCollisions();
         trySpawnFruit();
-        updateFruit();
+        updateFruit(deltaTime);
 
         if (frightenedMode) {
-          frightenedTimer -= 16.67;
+          frightenedTimer -= deltaTime;
           if (frightenedTimer <= 0) {
             frightenedMode = false;
             for (const ghost of ghosts) { ghost.frightened = false; }
@@ -1168,7 +1176,7 @@
       }
 
       if (gameState === 'dying') {
-        deathAnimTimer += 16.67;
+        deathAnimTimer += deltaTime;
         if (deathAnimTimer >= 1500) {
           if (lives <= 0) {
             gameState = 'gameover';
@@ -1220,8 +1228,13 @@
       }
     }
 
-    function gameLoop() {
-      update();
+    function gameLoop(timestamp) {
+      if (!lastTime) lastTime = timestamp;
+      let deltaTime = timestamp - lastTime;
+      lastTime = timestamp;
+      // 防止背景分頁回來後爆衝，上限約 3 幀 (50ms)
+      if (deltaTime > 50) deltaTime = 50;
+      update(deltaTime);
       draw();
       requestAnimationFrame(gameLoop);
     }
