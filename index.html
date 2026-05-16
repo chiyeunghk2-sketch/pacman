@@ -281,6 +281,7 @@
     let activeFruit = null; // { type, points, timer, eatenCount }
     let fruitSpawned = [false, false]; // 對應 FRUIT_SPAWN_DOTS 的兩次出現
     let lastTime = 0;
+    let deltaTime = 16.67;
     const isMobile = () => window.innerWidth <= 640 || 'ontouchstart' in window || navigator.maxTouchPoints > 0;
 
     // 讀取最高分
@@ -1230,10 +1231,11 @@
 
     function gameLoop(timestamp) {
       if (!lastTime) lastTime = timestamp;
-      let deltaTime = timestamp - lastTime;
+      let dt = timestamp - lastTime;
       lastTime = timestamp;
       // 防止背景分頁回來後爆衝，上限約 3 幀 (50ms)
-      if (deltaTime > 50) deltaTime = 50;
+      if (dt > 50) dt = 50;
+      deltaTime = dt;
       update(deltaTime);
       draw();
       requestAnimationFrame(gameLoop);
