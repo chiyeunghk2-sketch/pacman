@@ -33,22 +33,22 @@
     }
     .touch-controls {
       display: none;
-      margin-top: 16px;
+      margin-top: 12px;
       user-select: none;
       -webkit-user-select: none;
       touch-action: manipulation;
     }
-    .touch-controls .btn-row {
+    .touch-controls .dpad-row {
       display: flex;
       justify-content: center;
       align-items: center;
-      gap: 20px;
-      margin: 4px 0;
+      gap: 12px;
+      margin: 2px 0;
     }
     .touch-controls button {
-      width: 64px;
-      height: 64px;
-      font-size: 28px;
+      width: 60px;
+      height: 60px;
+      font-size: 26px;
       background: #1a1a1a;
       color: #FFFF00;
       border: 3px solid #333;
@@ -79,12 +79,14 @@
   <div class="game-container">
     <canvas id="game" width="560" height="720"></canvas>
     <div class="touch-controls">
-      <button class="btn-up" aria-label="上">▲</button>
-      <div class="btn-row">
+      <div class="dpad-row">
         <button class="btn-left" aria-label="左">◄</button>
+        <button class="btn-up" aria-label="上">▲</button>
         <button class="btn-right" aria-label="右">►</button>
       </div>
-      <button class="btn-down" aria-label="下">▼</button>
+      <div class="dpad-row">
+        <button class="btn-down" aria-label="下">▼</button>
+      </div>
     </div>
     <div class="info">方向鍵移動 | ENTER 開始 | R 重新開始</div>
   </div>
@@ -116,6 +118,110 @@
     };
     const FRUITS = ['cherry','strawberry','orange','apple','melon','galaxian','bell','key'];
     const ENTITY_RADIUS = 12; // 角色繪製半徑（比 TILE_SIZE/2 更大）
+    const FRUIT_POINTS = [100, 300, 500, 700, 1000, 2000, 3000, 5000];
+    const FRUIT_SPAWN_DOTS = [70, 170];
+    const FRUIT_DURATION = 9000; // 水果停留時間 (ms)
+    const FRUIT_TILE = { col: 13, row: 23 }; // 水果出現位置
+
+    // ==================== 音效管理器 (Web Audio API) ====================
+    class SoundManager {
+      constructor() {
+        this.ctx = null;
+        this.initialized = false;
+        this.wakaToggle = false;
+        this.wakaTimer = 0;
+      }
+      init() {
+        if (this.initialized) return;
+        const AudioCtx = window.AudioContext || window.webkitAudioContext;
+        if (!AudioCtx) return;
+        this.ctx = new AudioCtx();
+        this.initialized = true;
+      }
+      now() { return this.ctx ? this.ctx.currentTime : 0; }
+      tone(freq, duration, type = 'square', vol = 0.08, when = null) {
+        if (!this.ctx) return;
+        const t = when === null ? this.now() : when;
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+        osc.type = type;
+        osc.frequency.setValueAtTime(freq, t);
+        gain.gain.setValueAtTime(vol, t);
+        gain.gain.exponentialRampToValueAtTime(0.001, t + duration);
+        osc.connect(gain);
+        gain.connect(this.ctx.destination);
+        osc.start(t);
+        osc.stop(t + duration);
+      }
+      playWaka() {
+        if (!this.ctx) return;
+        const now = this.now();
+        // 經典 waka-waka: 兩個音交替
+        this.wakaToggle = !this.wakaToggle;
+        const f1 = this.wakaToggle ? 320 : 280;
+        const f2 = this.wakaToggle ? 280 : 320;
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+        osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(f1, now);
+        osc.frequency.setValueAtTime(f2, now + 0.05);
+        gain.gain.setValueAtTime(0.06, now);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.1);
+        osc.connect(gain);
+        gain.connect(this.ctx.destination);
+        osc.start(now);
+        osc.stop(now + 0.1);
+      }
+      playPower() {
+        if (!this.ctx) return;
+        const now = this.now();
+        // 大力丸音效: 快速交替高音
+        for (let i = 0; i < 4; i++) {
+          const t = now + i * 0.08;
+          this.tone(i % 2 === 0 ? 420 : 380, 0.08, 'square', 0.07, t);
+        }
+      }
+      playEatGhost() {
+        if (!this.ctx) return;
+        const now = this.now();
+        // 吃鬼: 快速上升音階
+        [600, 800, 1000, 1200].forEach((f, i) => {
+          this.tone(f, 0.12, 'square', 0.08, now + i * 0.08);
+        });
+      }
+      playDeath() {
+        if (!this.ctx) return;
+        const now = this.now();
+        // 死亡: 下降音階
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+        osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(300, now);
+        osc.frequency.exponentialRampToValueAtTime(60, now + 1.2);
+        gain.gain.setValueAtTime(0.1, now);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 1.2);
+        osc.connect(gain);
+        gain.connect(this.ctx.destination);
+        osc.start(now);
+        osc.stop(now + 1.2);
+      }
+      playFruit() {
+        if (!this.ctx) return;
+        const now = this.now();
+        // 吃水果: 清脆雙音
+        this.tone(880, 0.15, 'sine', 0.1, now);
+        this.tone(1100, 0.2, 'sine', 0.1, now + 0.12);
+      }
+      playStart() {
+        if (!this.ctx) return;
+        const now = this.now();
+        // 開場音: 經典四音
+        [440, 550, 660, 880].forEach((f, i) => {
+          this.tone(f, 0.25, 'square', 0.08, now + i * 0.18);
+        });
+      }
+    }
+    const sounds = new SoundManager();
 
     // ==================== 迷宮地圖 (28x31) ====================
     // 0=空路 1=牆壁 2=豆子 3=大力丸 4=鬼魂屋內部 5=鬼魂門
@@ -172,12 +278,15 @@
     let floatingTexts = [];
     let winFlashTimer = 0;
     let startFlash = 0;
+    let activeFruit = null; // { type, points, timer, eatenCount }
+    let fruitSpawned = [false, false]; // 對應 FRUIT_SPAWN_DOTS 的兩次出現
 
     // 讀取最高分
     try { highScore = parseInt(localStorage.getItem('pacmanHighScore')) || 0; } catch(e) { highScore = 0; }
 
     // ==================== 輸入處理 ====================
     document.addEventListener('keydown', (e) => {
+      sounds.init();
       if (gameState === 'start') {
         if (e.key === 'Enter') { initGame(); }
         return;
@@ -309,10 +418,24 @@
         if (tile === DOT) {
           maze[this.tileY][this.tileX] = EMPTY;
           score += 10; dotsEaten++;
+          sounds.playWaka();
         } else if (tile === POWER) {
           maze[this.tileY][this.tileX] = EMPTY;
           score += 50; dotsEaten++;
           activateFrightenedMode();
+          sounds.playPower();
+        }
+        // 吃水果
+        if (activeFruit && !activeFruit.eaten && this.tileX === FRUIT_TILE.col && this.tileY === FRUIT_TILE.row) {
+          activeFruit.eaten = true;
+          score += activeFruit.points;
+          floatingTexts.push({
+            x: this.x, y: this.y - 10,
+            text: String(activeFruit.points),
+            timer: 1000, color: '#ff8'
+          });
+          sounds.playFruit();
+          activeFruit = null;
         }
       }
       draw() {
@@ -558,6 +681,7 @@
               timer: 1000, color: '#00ffff'
             });
             ghostEatScore *= 2;
+            sounds.playEatGhost();
           } else if (!ghost.eaten) {
             loseLife(); return;
           }
@@ -565,11 +689,46 @@
       }
     }
 
+    function trySpawnFruit() {
+      if (activeFruit && !activeFruit.eaten) return;
+      for (let i = 0; i < FRUIT_SPAWN_DOTS.length; i++) {
+        if (!fruitSpawned[i] && dotsEaten >= FRUIT_SPAWN_DOTS[i]) {
+          fruitSpawned[i] = true;
+          const typeIdx = (level - 1) % FRUITS.length;
+          activeFruit = {
+            type: FRUITS[typeIdx],
+            points: FRUIT_POINTS[typeIdx],
+            timer: FRUIT_DURATION,
+            eatenCount: dotsEaten
+          };
+          break;
+        }
+      }
+    }
+
+    function updateFruit() {
+      if (!activeFruit || activeFruit.eaten) return;
+      activeFruit.timer -= 16.67;
+      if (activeFruit.timer <= 0) {
+        activeFruit = null;
+      }
+    }
+
+    function drawActiveFruit() {
+      if (!activeFruit || activeFruit.eaten) return;
+      const fx = FRUIT_TILE.col * TILE_SIZE + TILE_SIZE / 2;
+      const fy = FRUIT_TILE.row * TILE_SIZE + TILE_SIZE / 2 + MAZE_OFFSET_Y;
+      // 閃爍效果 (最後 3 秒)
+      if (activeFruit.timer < 3000 && Math.floor(Date.now() / 200) % 2 === 0) return;
+      drawFruit(fx, fy, 16, activeFruit.type);
+    }
+
     function loseLife() {
       lives--;
       gameState = 'dying';
       deathAnimTimer = 0;
       deathAnimPhase = 0;
+      sounds.playDeath();
     }
 
     function resetPositions() {
@@ -590,7 +749,10 @@
       gameState = 'ready'; readyTimer = 3000;
       frightenedMode = false; frightenedTimer = 0;
       floatingTexts = [];
+      activeFruit = null;
+      fruitSpawned = [false, false];
       resetPositions();
+      sounds.playStart();
     }
 
     function nextLevel() {
@@ -602,7 +764,10 @@
       frightenedMode = false; frightenedTimer = 0;
       ghostEatScore = 200;
       floatingTexts = [];
+      activeFruit = null;
+      fruitSpawned = [false, false];
       resetPositions();
+      sounds.playStart();
     }
 
     // ==================== 繪圖函數 ====================
@@ -877,12 +1042,14 @@
         ctx.fillText(g.name, CANVAS_WIDTH / 2 - 25, gy);
       }
 
-      // PRESS START 閃爍
+      // PRESS START / TAP TO START 閃爍
       if (Math.floor(Date.now() / 600) % 2 === 0) {
         ctx.fillStyle = '#fff';
         ctx.font = '14px "Press Start 2P", monospace';
         ctx.textAlign = 'center';
-        ctx.fillText('PRESS ENTER TO START', CANVAS_WIDTH / 2, MAZE_OFFSET_Y + ROWS * TILE_SIZE - 80);
+        const isMobile = window.innerWidth <= 640 || 'ontouchstart' in window;
+        const msg = isMobile ? 'TAP SCREEN TO START' : 'PRESS ENTER TO START';
+        ctx.fillText(msg, CANVAS_WIDTH / 2, MAZE_OFFSET_Y + ROWS * TILE_SIZE - 80);
       }
 
       ctx.fillStyle = '#888';
@@ -979,6 +1146,8 @@
         pacman.update();
         for (const ghost of ghosts) { ghost.update(); }
         checkCollisions();
+        trySpawnFruit();
+        updateFruit();
 
         if (frightenedMode) {
           frightenedTimer -= 16.67;
@@ -1029,9 +1198,11 @@
 
       if (gameState === 'ready') {
         drawReady();
+        drawActiveFruit();
         pacman.draw();
         for (const ghost of ghosts) { ghost.draw(); }
       } else if (gameState === 'playing') {
+        drawActiveFruit();
         pacman.draw();
         for (const ghost of ghosts) { ghost.draw(); }
         drawFloatingTexts();
@@ -1060,7 +1231,11 @@
       const bind = (sel, dir) => {
         const btn = document.querySelector(sel);
         if (!btn) return;
-        const setDir = (e) => { e.preventDefault(); nextDir = dir; };
+        const setDir = (e) => {
+          e.preventDefault();
+          sounds.init();
+          nextDir = dir;
+        };
         btn.addEventListener('touchstart', setDir, { passive: false });
         btn.addEventListener('mousedown', setDir);
       };
@@ -1068,6 +1243,22 @@
       bind('.btn-down',  DIRECTIONS.DOWN);
       bind('.btn-left',  DIRECTIONS.LEFT);
       bind('.btn-right', DIRECTIONS.RIGHT);
+
+      // 畫布點擊/觸控開始遊戲
+      const startGame = (e) => {
+        sounds.init();
+        if (gameState === 'start') { initGame(); }
+        else if (gameState === 'gameover' || gameState === 'win') {
+          if (gameState === 'win') nextLevel(); else initGame();
+        }
+      };
+      canvas.addEventListener('touchstart', (e) => {
+        if (gameState === 'start' || gameState === 'gameover' || gameState === 'win') {
+          e.preventDefault();
+          startGame();
+        }
+      }, { passive: false });
+      canvas.addEventListener('click', startGame);
     }
 
     // ==================== 初始化 ====================
