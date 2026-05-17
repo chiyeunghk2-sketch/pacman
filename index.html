@@ -220,6 +220,12 @@
           this.tone(f, 0.25, 'square', 0.08, now + i * 0.18);
         });
       }
+      playMoveEmpty() {
+        if (!this.ctx) return;
+        const now = this.now();
+        // 沒吃到食物時的輕微移動聲
+        this.tone(160, 0.06, 'sine', 0.03, now);
+      }
     }
     const sounds = new SoundManager();
 
@@ -283,6 +289,11 @@
     let lastTime = 0;
     let deltaTime = 16.67;
     const isMobile = () => window.innerWidth <= 640 || 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+
+    // 關卡速度係數：第1關減慢30% (0.70)，之後每關+5%，上限150%
+    function getLevelSpeedFactor(lvl) {
+      return Math.min(0.70 + (lvl - 1) * 0.05, 1.5);
+    }
 
     // 讀取最高分
     try { highScore = parseInt(localStorage.getItem('pacmanHighScore')) || 0; } catch(e) { highScore = 0; }
@@ -388,7 +399,7 @@
     // ==================== Pac-Man ====================
     class Pacman extends Entity {
       constructor(tileX, tileY) {
-        super(tileX, tileY, 2.5);
+        super(tileX, tileY, 2.5 * getLevelSpeedFactor(level));
         this.mouthFrame = 0;
         this.mouthTimer = 0;
         this.angleOffset = 0;
@@ -429,6 +440,8 @@
           score += 50; dotsEaten++;
           activateFrightenedMode();
           sounds.playPower();
+        } else {
+          sounds.playMoveEmpty();
         }
         // 吃水果
         if (activeFruit && !activeFruit.eaten && this.tileX === FRUIT_TILE.col && this.tileY === FRUIT_TILE.row) {
@@ -458,7 +471,7 @@
     // ==================== 鬼魂 ====================
     class Ghost extends Entity {
       constructor(tileX, tileY, color, name, spawnDelay) {
-        super(tileX, tileY, 1.8);
+        super(tileX, tileY, 1.8 * getLevelSpeedFactor(level));
         this.color = color;
         this.name = name;
         this.spawnDelay = spawnDelay;
@@ -470,6 +483,7 @@
         this.inHouse = true;
         this.eyeDir = { x: 0, y: -1 };
         this.houseDir = 1; // 在屋內左右擺動
+        this.wavePhase = 0;
       }
       update(deltaTime) {
         if (!this.active) {
@@ -477,9 +491,10 @@
           if (this.spawnDelay <= 0) { this.active = true; }
           return;
         }
-        if (this.eaten) { this.speed = 4.5; }
-        else if (this.frightened) { this.speed = 1.2; }
-        else { this.speed = 1.8; }
+        const factor = getLevelSpeedFactor(level);
+        if (this.eaten) { this.speed = 4.5 * factor; }
+        else if (this.frightened) { this.speed = 1.2 * factor; }
+        else { this.speed = 1.8 * factor; }
 
         // 鬼魂屋內行為
         if (this.inHouse && !this.eaten) {
@@ -489,6 +504,7 @@
 
         super.update(deltaTime);
         if (this.dir.x !== 0 || this.dir.y !== 0) { this.eyeDir = { ...this.dir }; }
+        this.wavePhase += deltaTime * 0.012;
       }
       updateInHouse(deltaTime) {
         const dtScale = deltaTime / 16.67;
@@ -496,7 +512,7 @@
         const doorY = 12 * TILE_SIZE + TILE_SIZE / 2 + MAZE_OFFSET_Y;
         const targetX = 13 * TILE_SIZE + TILE_SIZE / 2; // col 13 center
         if (Math.abs(this.x - targetX) > 1) {
-          this.x += (targetX > this.x ? 1 : -1) * 0.8 * dtScale;
+          this.x += (targetX > this.x ? 1 : -1) * 0.8 * getLevelSpeedFactor(level) * dtScale;
           this.eyeDir = targetX > this.x ? DIRECTIONS.RIGHT : DIRECTIONS.LEFT;
         } else {
           this.x = targetX;
@@ -515,7 +531,7 @@
       onReachCenter() {
         if (this.eaten && this.tileX === this.spawnX && this.tileY === this.spawnY) {
           this.eaten = false; this.frightened = false;
-          this.speed = 1.8; this.active = false; this.spawnDelay = 2000;
+          this.speed = 1.8 * getLevelSpeedFactor(level); this.active = false; this.spawnDelay = 2000;
           this.inHouse = true;
           return;
         }
@@ -599,7 +615,8 @@
         ctx.lineTo(gx + r, gy + r * 0.5);
         for (let i = 0; i < 3; i++) {
           const waveX = gx + r - (i + 1) * (2 * r / 3);
-          ctx.quadraticCurveTo(waveX + r / 3, gy + r * 0.75, waveX, gy + r * 0.5);
+          const waveOffset = Math.sin(this.wavePhase + i * 1.2) * r * 0.15;
+          ctx.quadraticCurveTo(waveX + r / 3, gy + r * 0.75 + waveOffset, waveX, gy + r * 0.5);
         }
         ctx.lineTo(gx - r, gy + r * 0.5);
         ctx.fill();
